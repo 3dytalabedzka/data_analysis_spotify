@@ -1,0 +1,469 @@
+\documentclass[12pt]{mwrep}
+\usepackage[utf8]{inputenc}
+\usepackage{polski}
+\usepackage{lmodern}
+\usepackage{multirow}
+\usepackage{amssymb}
+\usepackage{hyperref}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{xcolor,colortbl}
+\hypersetup{colorlinks=true, urlcolor=PineGreen, allcolors=PineGreen}
+\usepackage{graphicx} 
+\usepackage[cc]{titlepic}
+\author{Edyta Łabędzka, Iga Świtalska}
+\title{Najlepsze piosenki na imprezę w~oparciu o~dane ze Spotify}
+\date{\today}
+\titlepic{\includegraphics[width=\textwidth]{spotify.jpg}}
+
+<<include=F>>= 
+pdf.options(encoding='CP1250')
+library(xtable)
+library(ggplot2)
+library(corrplot) 
+library(stringr)
+library(plyr)
+library(nortest)
+library(lmtest)
+library(data.table)
+@
+
+\begin{document}
+
+\maketitle
+
+\chapter{Wprowadzenie}
+\section{Opis danych}
+Dane, które będziemy analizować dotyczą cech utworów, pochodzących z~notowania top 2000 najlepszych piosenek wszech czasów, dostępnego na~platformie Spotify w~2019 roku.
+Dane \href{https://www.kaggle.com/iamsumat/spotify-top-2000s-mega-dataset}{"Top 2000"} zawierają 15 kolumn oraz 1994 utwory. W~dalszej części analizy będziemy się odnosić jedynie do podzbioru powyższych danych bez zmiennej "Index" oraz zmiennej "Speechiness". Kolumny "Index" nie wykorzystujemy, ponieważ R~automatycznie numeruje dane. Natomiast kolumnę "Speechiness" zdecydowałyśmy się wykluczyć ze~względu na trudności z~jednoznaczną jej interpretacją.
+Dokładny opis zmiennych znajduje się w~tabeli \ref{table:zmienne_tabela}.
+
+\begin{table}[hbt]
+\centering
+
+\resizebox{\textwidth}{!}{\begin{tabular}{llll}
+\textbf{Zmienne}             & \textbf{Opis}                              & \textbf{Typ} & \textbf{Wartości}                 \\ \cline{1-4}
+Title                        & Nazwa utworu                               & Kategoryczna & $1958$ unikalnych tytułów         \\ \cline{1-4}
+Artist                       & Nazwa wykonawcy                            & Kategoryczna & $731$ artystów                    \\ \cline{1-4}
+Top Genre                    & Gatunek utworu                             & Kategoryczna & $149$ gatunków                    \\ \cline{1-4}
+Year                         & Rok wydania                                & Kategoryczna & $\{1956, 1957, \ldots, 2019\}$    \\ \cline{1-4}
+Beats Per Minute (BPM)       & Tempo utworu (ilość uderzeń na minutę)     & Ilościowa    & $ \{ 0,1, \ldots \}$              \\ \cline{1-4}
+Energy                       & Miara intensywności i akywności piosenki   & Ilościowa    & $ \{ 0,1, \ldots, 100 \}$         \\ \cline{1-4}
+\multirow{3}{*}{Danceability}& Jak bardzo nadaje się utwór do tańca       & \multirow{3}{*}{Ilościowa} & \multirow{3}{*}{$ \{ 0,1, \ldots, 100 \}$} \\
+                             & (dla wartości większych utwory bardziej    &              &                                   \\   
+                             & taneczne)                                  &              &                                   \\ \cline{1-4}
+Loudness (dB)                & Głośność (w decybelach)                    & Ilościowa    & $ \mathbb{Z} $                    \\ \cline{1-4}
+\multirow{2}{*}{Liveness}    & Opisuje prawdopodobieństwo, że utwór       & \multirow{2}{*}{Ilościowa} & \multirow{2}{*}{$ \{ 0,1, \ldots, 100 \}$} \\
+                             & został nagrany na żywo (w procentach)      &              &                                   \\ \cline{1-4}
+\multirow{2}{*}{Valence}     & Opisuje pozytywność muzyczną  (dla wyższych& \multirow{2}{*}{Ilościowa} & \multirow{2}{*}{$ \{ 0,1, \ldots, 100 \}$} \\
+                             & wartości utwory brzmią bardziej pogodnie)  &              &                                   \\ \cline{1-4}
+Length (Duration)            & Długość (w sekundach)                      & Ilościowa    & $ \{ 0,1, \ldots \}$              \\ \cline{1-4}
+\multirow{2}{*}{Acousticness}& Określa prawdopodobieństwo czy utwór jest  & \multirow{2}{*}{Ilościowa} & \multirow{2}{*}{$ \{ 0,1, \ldots, 100 \}$} \\
+                             & akustyczny (w procentach)                  &              &                                   \\ \cline{1-4}
+Popularity                   & Popularność utworu                         & Ilościowa    & $ \{ 0,1, \ldots, 100 \}$           
+\end{tabular}}
+\caption{Opis zmiennych}
+\label{table:zmienne_tabela}
+\end{table}
+
+\section{Cel projektu}
+Celem analizy będzie wybranie z~analizowanej playlisty najlepszych utworów na~przyjęcie. Rozważymy wiele czynników mogących wpływać na~dobrą zabawę przy muzyce i~postaramy się pomóc w doborze piosenek. Chcemy poruszyć poniższe problemy:
+\begin{itemize}
+  \item Jakie są najlepsze piosenki do tańca na podstawie ich charakterystyk?
+  \item Które gatunki najbardziej się nadają?
+  \item Z jakich lat utwory wybrać, by była największa szansa, że ludziom się spodoba?
+  \item Jeżeli nie chcemy szukać piosenek pojedyńczo, muzykę jakiego wykonawcy puścić?
+\end{itemize}
+
+\chapter{Przygotowanie danych}
+Importujemy potrzebne biblioteki.
+<<eval=F>>=
+library(xtable)
+library(ggplot2)
+library(corrplot) 
+library(stringr)
+library(plyr)
+library(nortest)
+library(lmtest)
+library(data.table)
+@
+
+Wczytujemy dane w R. 
+<<eval=F>>=
+data <- read.csv("Spotify-2000.csv")
+@
+
+<<echo=F>>=
+data <- read.csv("Spotify-2000.csv")
+n <- length(data$Year)
+
+set.seed(123)                         # ustawienie ziarna dla tych samych wyników
+data$Year[sample(1:n,0.01 * n)] <- NA # dodanie ok 1% braków danych
+@
+
+<<echo=F>>=                     
+data <- data[,-c(1,14)]               # usunięcie kolumny indeksów i speechiness
+@
+
+Najpierw zmienimy nazwy kilku zmiennych, by były bardziej czytelne. 
+<<>>=
+colnames(data)[c(3,5,8,11)] <- c("Genre", "BPM", "Loudness","Duration")
+@
+
+Sprawdzimy i~przygotujemy dane pod dalszą analizę. Użyjemy do~tego funkcji "summary" i~wyniki zaprezentujemy w tabeli \ref{tab:summary1}.
+<<results='asis', echo=F>>=
+names <- c(colnames(data[,8:13]), "")
+t <- rbind(summary(data[,1:7]), names)
+t <- rbind(t, cbind(summary(data[,8:13]), NA))
+tab <- xtable(t, caption = "Podsumowanie danych", label = "tab:summary1")
+print(tab, scalebox = 0.61, include.rownames = FALSE, hline.after= c(-1:0, 7:8, 14))
+@
+
+Okazuje się, że długość utworu jest zmienną typu "character" a~powinna być oczywiście liczbą. Spowodowane jest to~przez pojawiające się w~liczbach przecinki tzw. "decimal points" typowe w~tekstch anglojęzycznych. Usuwamy przecinki i~zmieniamy typ na~liczby całkowite.
+<<>>>=
+data$Duration <- str_replace(data$Duration, ",", "")
+class(data$Duration) <- "integer"
+@
+
+W tabeli \ref{tab:summary1} pojawiają się również braki danych w~kolumnie "Year". Widzimy, że jest ich jedynie 19. Mając dostęp do~Spotify (lub~internetu) najrozsądniejszym rozwiązaniem jest sprawdzenie którym utworom i~autorom odpowiadają, wyszukanie ich i~uzupełnienie brakujących wartości.
+<<>>=
+data[is.na(data$Year),c(1,2,4)]
+@
+Znalezione brakujące lata, którymi uzupełnimy dane.
+<<echo=F>>=
+missing <- c(2008,2001,2010,2011,2013,2014,1970,2017,1973,1976,1977,1979,1968,1984,1985,1987,1993,1998,2012)
+missing[1:10]
+missing[11:19]
+@
+<<echo=F>>=
+data[is.na(data$Year),4] <- missing
+@
+
+Chcemy również sprawdzić czy są duplikaty.
+<<>>=
+sum(duplicated(data))
+@
+Duplikatami w takim razie nie musimy się przejmować.
+
+Ostatnią rzeczą którą zmieniamy będą lata. Połączymy je w~przedziały po~10 lat, w~ten sposób uzyskujemy zmienną kategoryczną, która pozwoli nam na~analizowanie danych dekadami. 
+
+Tworzymy następujące przedziały:
+<<echo=F>>=
+intervals <- c("[1950,1960)","[1960,1970)","[1970,1980)","[1980,1990)","[1990,2000)","[2000,2010)","[2010,2020)")
+intervals[1:4]
+intervals[5:7]
+year0 = 1940
+for (i in 1:7){
+  data$Year[data$Year >= year0+i*10 & data$Year < year0 + (i+1)*10] <- intervals[i]
+}
+@
+
+W tabeli \ref{tab:summary2} widzimy podsumowanie danych po wprowadzonych zmianach. Porównując tabele \ref{tab:summary1} i~\ref{tab:summary2} , widzimy nowe nazwy zmiennych, nie ma już żadnych braków danych, obserwacje dla długości utworu są liczbami  oraz rok wydania stał się zmienną kategoryczną.
+<<results='asis', echo=F>>=
+names <- c(colnames(data[,8:13]), "")
+t <- rbind(summary(data[,1:7]), names)
+t <- rbind(t, cbind(summary(data[,8:13]), NA))
+tab <- xtable(t, caption = "Podsumowanie danych po zmianach", label = "tab:summary2")
+print(tab, scalebox = 0.61, include.rownames = FALSE, hline.after= c(-1:0, 6:7, 13))
+@
+
+
+\chapter{Analiza danych}
+
+
+\section{Jakie są najlepsze piosenki do tańca na podstawie ich charakterystyk?}
+Na dobrym przyjęciu nie może zabraknąć tańca, a~do~tańca potrzeba odpowiedniej muzyki. Spróbujmy taką znaleźć, zaczniemy od~przyjrzenia się macierzy korelacji.
+<<eval=F>>=
+corrplot(cor(data[,-c(1,2,3,4)]),method = "number")
+@
+<<korelacja, fig.width=12, fig.height=12, fig.align='center', fig.cap='Macierz koleracji ', echo=F>>=
+corrplot(cor(data[,-c(1,2,3,4)]),method = "number",tl.col = "black", col=colorRampPalette(c("#D82C20","white","#026645"))(200), number.cex=2, tl.cex=2, cl.cex=1.8)
+@
+
+<<rozp_dance, fig.width=4, fig.height=4, fig.align='center', fig.cap='Wykres rozproszenia "Danceability" od "Valence"', echo=F>>=
+ggplot(data, aes(x=Valence, y=Danceability)) + geom_point(colour="#D82C20", size=0.3) + theme(text = element_text(size=10), axis.text.y = element_text(size=10), axis.text.x = element_text(size=10))
+@
+<<bpm_dance, fig.width=4, fig.height=4, fig.align='center', fig.cap='Wykres rozproszenia taneczności od tempa', echo=F>>=
+ggplot(data, aes(x=BPM, y=Danceability)) + geom_point(colour="#D82C20", size=0.3) + theme(text = element_text(size=10), axis.text.y = element_text(size=10), axis.text.x = element_text(size=10))
+@
+<<rozp_loud, fig.width=4, fig.height=4, fig.align='center', fig.cap='Wykres rozproszenia energiczności od głośności', echo=F>>=
+ggplot(data, aes(x=Loudness, y=Energy)) + geom_point(colour="#EC5A96", size=0.3) + theme(text = element_text(size=10), axis.text.y = element_text(size=10), axis.text.x = element_text(size=10))
+@
+<<rozp_acou, fig.width=4, fig.height=4, fig.align='center', fig.cap='Wykres rozproszenia energiczności od akustyczności', echo=F>>=
+ggplot(data, aes(x=Acousticness, y=Energy)) + geom_point(colour="#EC5A96", size=0.3) + theme(text = element_text(size=10), axis.text.y = element_text(size=10), axis.text.x = element_text(size=10))
+@
+
+Na podstawie wykresu \ref{fig:korelacja} widzimy, że "Danceability" jest dodatnio skorelowane z~"Valence". Nie jest to~zaskakująca obserwacja, lepiej się tańczy do~radosnej muzyki. Na~wykresie rozproszenia \ref{fig:rozp_dance} dane wyglądają jakby układały się wzdłuż rosnącej prostej, spróbujemy dopasować do~nich prostą regresji liniowej.
+
+Najpierw sprawdzamy czy są spełnione założenia regresji liniowej. Przeprowadzamy analizę residuów:
+<<>>=
+lmFit <- lm(data$Danceability~data$Valence)
+@
+<<echo=F>>=
+residuals <- lmFit$residuals
+ad.test(residuals)
+dwtest(lmFit)
+@
+Z testu Andersona-Darlinga wynika, że nie mamy podstaw do~odrzucenia założenia o~rozkładzie normalnym residuów. Natomiast wynik testu 
+Durbina-Watsona wskazuje na autokorelację między residuami przez co nie możemy zastosować regresji liniowej.
+Jedyne z~czego możemy skorzystać po~powyższej analizie to~dodatnia korelacja. Wynika z niej, że radośniejsze piosenki bardziej nadają się do~tańca.
+\newpage
+Intuicja podpowiada nam, że tempo utworu może mnieć wpływ na to, czy piosenka nadaje się do~tańca. Co nie koniecznie jest zależnością liniową, dlatego nie jest widoczne w~macierzy korelacji. Zobaczmy wykres rozproszenia.
+
+Na wykresie \ref{fig:bpm_dance} taneczność przymuje największe wartości dla tempa w~okolicy $100-150$ uderzeń na~minutę. Najniższe natomiast dla wartości skrajnych tempa. Nasuwa to~rozsądny wniosek, że do~za~szybkiej jak i zbyt wolnej muzyki źle się tańczy.
+
+Uważamy, że piosenki do~tańca na~~imprezie powinny być również energiczne, dlatego też przeanalizujemy zmienną "Energy".
+Podobnie jak poprzednio posłużymy się macierzą korelacji \ref{fig:korelacja}, na~której jest widoczna duża dodatnia korelacja z~"Loudness" oraz ujemna korelacja z~"Acousticness". Zobaczmy te~zależności na~wykresach rozproszenia \ref{fig:rozp_loud} i~\ref{fig:rozp_acou}.
+
+Po przyjrzeniu się wykresowi \ref{fig:rozp_loud} możemy stwierdzić, że im głośniejsze piosenki tym bardziej  energiczne. Natomiast na~wykresie \ref{fig:rozp_acou} wraz z~rosnącą akustycznością, energiczność maleje. Nie ma utworów akustycznych, które byłyby bardzo energiczne, dlatego nie są one dobrym wyborem na przyjęcie. 
+
+\section{Które gatunki najbardziej się nadają?}
+Chcemy uporządkować gatunki. Jest ich zbyt dużo, oraz wiele gatunków odpowiada tylko jednemu utworowi. Zobaczmy 5 najliczniejszych gatunków, którym jest przyporządkowanych najwięcej utworów i 5 najmniej licznych.
+<<echo=F>>=
+genre_count <- count(data,"Genre")
+genre_count[order(genre_count$freq,decreasing=T),][c(1:5,144:149),]
+@
+Postanowiłyśmy przyporządkować gatunki do kilku najbadziej popularnych kategorii:
+
+<<echo=F>>=
+genres <- c("rock", "pop", "rap", "blues","dance", "country", "metal", "hip hop", "indie", "latin", "jazz","soul","mellow")
+
+genres[1:6]
+genres[7:12]
+genres[13]
+@
+
+Rodzaj niektórych piosenek stanowi połączenie dwóch podstawowych gatunków, można więc przyporządkować je~do~więcej niż jednej kategorii.
+Na~przykład gatunek ''alternative pop rock'' może być uznany jako pop i~jako rock. Postanowiłyśmy utworzyć kopię naszego zbioru danych ze zduplikowanymi utworami, które należą do~kilku rodzajów. Podjęłyśmy taką decyzję, żeby nie utracić informacji wynikającej z~tego, że utwory mogą być mieszanką gatunków i~żeby równocześnie nie zaburzać pozostałych statystyk. W tej części analizy będziemy się odnosić jedynie do~zmodyfikowanych danych.
+
+<<echo=F>>=
+data2 <- copy(data)
+@
+
+<<echo=F>>=
+# duplikowanie i kategoryzowanie gatunków
+for (gen in genres){
+  if (sum(duplicated(data2[,-3])) == 0){
+    dupl <- data2[grepl(gen,data2$Genre) & grepl(paste0(genres[-match(gen,genres)],collapse="|"),data2$Genre),]
+    data2$Genre[grepl(gen,data2$Genre)] <- gen
+    data2 <- rbind(data2,dupl)
+  } else{
+    data2$Genre[grepl(gen,data2$Genre)] <- gen
+  }
+}
+@
+
+Po wstępnej obróbce danych z~$\Sexpr{length(unique(data$Genre))}$ otzymujemy $\Sexpr{length(unique(data2$Genre))}$ kategorii. Następnie piosenki z~gatunku ''hip-hop'' przypisujemy do~''rapu'', a~''electro house'' i~''electornica'' do~''dance ze względu na~ich podobieństwo.
+
+<<>>=
+data2$Genre[data2$Genre == "hip hop"] <- "rap"
+data2$Genre[data2$Genre %in% c("electro house","electronica")] <- "dance"
+@
+
+Na koniec gatunkom które mają mniej niż 10 utworów przypisujemy kategorię "other", ponieważ analiza tak małej ilości utworów nie powie nam nic o~tych gatunkach.
+
+<<echo=F>>=
+rare_genres <- count(data2,"Genre")[count(data2,"Genre")$freq < 10,"Genre"]
+data2$Genre[data2$Genre %in% rare_genres] <- "other"
+@
+
+Ostatecznie mamy $\Sexpr{length(unique(data2$Genre))}$ następujących kategorii:
+<<echo=F>>=
+count(data2,"Genre")[order(count(data2,"Genre")$freq,decreasing=T),]
+@
+
+Spośród nich wybierzemy pięć o najwyższej średniej taneczności:
+<<echo=F>>=
+mean_danceability <- sapply(unique(data2$Genre), function(x) {mean(data2$Danceability[data2$Genre == x])})
+
+mean_danceability[order(mean_danceability,decreasing=T)][1:5]
+@
+
+Pięć o najwyższej średniej pozytywności:
+<<echo=F>>=
+mean_valence <- sapply(unique(data2$Genre), function(x) {mean(data2$Valence[data2$Genre == x])})
+
+mean_valence[order(mean_valence,decreasing=T)][1:5]
+@
+\newpage
+Pięć o najwyższej średniej energiczności:
+<<echo=F>>=
+mean_energy <- sapply(unique(data2$Genre), function(x) {mean(data2$Energy[data2$Genre == x])})
+
+mean_energy[order(mean_energy,decreasing=T)][1:5]
+@
+
+Pięć o najwyższej średniej popularności:
+<<echo=F>>=
+mean_popularity <- sapply(unique(data2$Genre), function(x) {mean(data2$Popularity[data2$Genre == x])})
+
+mean_popularity[order(mean_popularity,decreasing=T)][1:5]
+@
+
+<<echo=F>>=
+PineGreen <- "#00563F"
+@
+
+<<box_dance, fig.width=7, fig.height=4, fig.align='center', fig.cap='Wykresy pudełkowe dla gatunków o najwyższej średniej taneczności', echo=F>>=
+ggplot(data=data2[data2$Genre %in% c("rap","disco","big beat","funk","mellow"),], aes(x=Genre,y=Danceability)) + geom_boxplot(fill=PineGreen, alpha=0.2)
+@
+
+<<box_valence, fig.width=7, fig.height=4, fig.align='center', fig.cap='Wykresy pudełkowe dla gatunków o najwyższej średniej pozytywności', echo=F>>=
+ggplot(data=data2[data2$Genre %in% c("rap","disco","blues","country","british invasion"),], aes(x=Genre,y=Valence)) + geom_boxplot(fill=PineGreen, alpha=0.2)
+@
+
+<<box_energy, fig.width=7, fig.height=4, fig.align='center', fig.cap='Wykresy pudełkowe dla gatunków o najwyższej średniej energiczności', echo=F>>=
+ggplot(data=data2[data2$Genre %in% c("big beat","metal","disco","dance", "rap"),], aes(x=Genre,y=Energy)) + geom_boxplot(fill=PineGreen, alpha=0.2)
+@
+
+<<box_pop, fig.width=7, fig.height=4, fig.align='center', fig.cap='Wykresy pudełkowe dla gatunków o najwyższej średniej popularności', echo=F>>=
+ggplot(data=data2[data2$Genre %in% c("mellow", "british invasion", "permanent wave", "soul", "metal"),], aes(x=Genre,y=Popularity)) + geom_boxplot(fill=PineGreen, alpha=0.2)
+@
+
+Na podstawie wykresów \ref{fig:box_dance} możemy stwierdzić, że dla gatunków o~najwyższej średniej taneczności najmnieszy rozstęp międzykwartylowy mają gatunki big beat i~disco. Oznacza to, że nie ma dużego rozrzutu wśród piosenek, do większości z~nich dobrze się tańczy. Dlatego to właśnie te gatunki najbardziej nadają się na zabawę taneczną. Można również powiedzieć, że do~większej ilości utworów disco będzię się tańczyć lepiej niż do~big beat'u.
+
+W przypadku wykresów pudełkowych \ref{fig:box_valence} wszystkie gatunki mają duży rozrzut, jednak disco ma największą medianę i~najmniejszy rozstęp międzykwartylowy, więc można powiedziedzieć, że najbardziej się nadaje pod względem pozytywności muzycznej.
+
+Patrząc na wykresy \ref{fig:box_energy} widzimy, że piosenki z gatunków big beat mają najwyższą medianę, najwyższą średnią i~najmniejszy rozstęp międzykwartylowy, możemy zatem uznać ten gatunek za najbardziej energiczny.
+
+Na koniec rozpatrzymy popularność. W~tym wypadku wszyskie gatunki mają zbliżone mediany oraz wielkości pudełek, przez co~na~podstawie wykresu \ref{fig:box_pop} ciężko stwierdzić, który jest najpopularniejszy.
+
+\newpage
+Odpowiadając na zadane przez nas pytanie, zawężamy wybór do~dwóch gatunków, a~mianowicie disco i~big beat. W zleżności czy zależy nam bardziej na pozytywności, czy energiczności, powinniśmy odpowiednio wybrać  disco lub big beat.
+
+\section{Z jakch lat utwory wybrać by była największa szansa, że ludziom się spodoba?}
+Ponieważ połączyliśmy lata w~dekady, będziemy szukać dekady właśnie, z~której piosenki były najbardziej nadające się do~tańca, radosne, energiczne albo najpopularniejsze. Na~początek sprawdźmy jak wygląda procentowa ilość utworów w~danej dekadzie na~wykresie kołowym. 
+<<pie_year, fig.width=4, fig.height=4, fig.align='center', fig.cap='Wykres kołowy dla dekad', echo=F>>=
+ggplot(data, aes(x="", y=Year, fill=Year)) + geom_bar(width=1, stat="identity") + coord_polar("y", start=0) + theme_void() + scale_fill_manual(values = c("#F9C6C5", "#EC5A96", "#B73A3A", "#5C0001","#AF916D", "#77A950" ,"#026645"))
+@
+Z wykresu kołowego \ref{fig:pie_year} możemy odczytać, że próbek w~piewszej dekadzie jest bardzo mało, dlatego nie będziemy liczyć średnich z~tego okresu (mogły by być zaniżone lub zawyżone przez pojedyńcze piosenki).
+Dla pozostałych okresów zrobimy porównanie średnich, median oraz wariancji dla poszczególnych charakterystyk. 
+
+<<results='asis', echo=F>>=
+m_dan <- sapply(intervals[-1], function(x) {mean(data$Danceability[data$Year == x])} )
+m_dan <- rbind(m_dan, sapply(intervals[-1], function(x) {median(data$Danceability[data$Year == x])} ) )
+m_dan <- rbind(m_dan, sapply(intervals[-1], function(x) {var(data$Danceability[data$Year == x])} ) )
+row.names(m_dan) <- c("Średnia", "Mediana", "Wariancja")
+m_tab_d <- xtable(m_dan, caption = "Średnie, mediany i wariancje taneczności utworów dla dekad", label = "tab:mean1")
+print(m_tab_d, scalebox = 0.8)
+@
+
+<<results='asis', echo=F>>=
+m_val <- sapply(intervals[-1], function(x) {mean(data$Valence[data$Year == x])} )
+m_val <- rbind(m_val, sapply(intervals[-1], function(x) {median(data$Valence[data$Year == x])} ) )
+m_val <- rbind(m_val, sapply(intervals[-1], function(x) {var(data$Valence[data$Year == x])} ) )
+row.names(m_val) <- c("Średnia", "Mediana","Wariancja")
+m_tab_v <- xtable(m_val, caption = "Średnie, mediany i wariancje pozytywności utworów dla dekad", label = "tab:mean2")
+print(m_tab_v, scalebox = 0.8)
+@
+
+<<results='asis', echo=F>>=
+m_ene <- sapply(intervals[-1], function(x) {mean(data$Energy[data$Year == x])} )
+m_ene <- rbind(m_ene, sapply(intervals[-1], function(x) {median(data$Energy[data$Year == x])} ) )
+m_ene <- rbind(m_ene, sapply(intervals[-1], function(x) {var(data$Energy[data$Year == x])} ) )
+row.names(m_ene) <- c("Średnia", "Mediana","Wariancja")
+m_tab_e <- xtable(m_ene, caption = "Średnie, mediany i wariancje energiczności utworów dla dekad", label = "tab:mean3")
+print(m_tab_e, scalebox = 0.8)
+@
+
+<<results='asis', echo=F>>=
+m_pop <- sapply(intervals[-1], function(x) {mean(data$Popularity[data$Year == x])} )
+m_pop <- rbind(m_pop, sapply(intervals[-1], function(x) {median(data$Popularity[data$Year == x])} ) )
+m_pop <- rbind(m_pop, sapply(intervals[-1], function(x) {var(data$Popularity[data$Year == x])} ) )
+row.names(m_pop) <- c("Średnia", "Mediana","Wariancja")
+m_tab_p <- xtable(m_pop, caption = "Średnie, mediany i wariancje popularności utworów dla dekad", label = "tab:mean4")
+print(m_tab_p, scalebox = 0.8)
+@
+
+Analizując tabele \ref{tab:mean1} jak i~\ref{tab:mean2} możemy stwierdzić, że wśrod utworów z~"Top 2000" średnio najwięcej piosenek do~których się najlepiej tańczy jak i~zarazem najbardziej pozytywnych/radosnych znajdziemy w~latach $80$. Stwierdzamy to~na~podstawie tego, że mediany jak i~zarówno średnie są najwyższe, a~wariancje dla wszystkich dekad mają podobną wartość. 
+
+Lata $2000-2010$ charakteruzują się największym odsetkiem energicznych utworów, co~możemy zobaczyć w~tabeli \ref{tab:mean3}. Wariancje ponownie osiągają duże wartości, więc bierzemy pod uwagę jedynie mediany i~średnie. 
+
+Z~tabeli \ref{tab:mean4} dowiadujemy się natomiast, że~średnio najpopularniejsze utwory zostały wydane w~latach $60$. Odpowiada im także najmniejszą wariancja.
+
+Korzystając z~faktu, że analizujemy dane, które reprezentują top najpopularniejszych utworów na spotify. Możemy dowiedzieć się z~jakiej dekady utwory są najpopularniejsze nie tylko z tych analizowanych ale z~całego spotify. Biorąc to~pod uwagę, będą to lata z których najwięcej piosenek znalazło się w~danych. Korzystając z~wykresu \ref{fig:pie_year}, widzimy, że są to~lata: $2010-2020$.
+
+Podsumowując powyższe, najlepszym wyborem z~"Top 2000" będą utwory z~lat $1980-1990$. Kierując się energicznością utworów warto wybrać, te z lat $2000$. Jeżeli bardziej zależy nam na utworach będących hitami, lepszą opcją będą lata $60$ lub playlisty na spotify z~piosenkami z~lat $2010-2020$. 
+
+
+\section{Jeżeli nie chcemy szukać piosenek pojedyńczo, muzykę jakiego wykonawcy puścić?}
+<<echo=F>>=
+ordered_artists <- count(data,"Artist")[order(count(data,"Artist")$freq,decreasing=T),]
+ordered_artists <- ordered_artists[ordered_artists$freq > 10,]
+popular_artist <- ordered_artists$Artist
+@
+W tej sekcji skupimy się na najpopularniejszych artystach, czyli tych których utworów jest w~danych najwięcej (bo dane to "Top 2000"). W końcu jest największa szansa, że to oni spodobają się większości. Oprócz tego, gdybyśmy bazowali na popularności utworów i~robili średnią dla każdego artysty, mogliby przodować wykonawcy z~jedną znaną piosenką, którzy nie mają więcej popularnych utworów.
+ 
+Dlatego spośród wykonawców, do dalszej analizy wybierzemy tych, którzy mają co najmniej 10 utworów na playliście. To znaczy, że z~$\Sexpr{length(unique(data$Artist))}$ artystów zostanie nam $\Sexpr{nrow(ordered_artists)}$. Policzymy dla nich średnią taneczność, pozytywność, energiczność i~popularność. Pięć najwyższych wyników, dla każdej z~charakterystyk zobaczyć można poniżej.
+
+<<>>=
+data_popular <- data[data$Artist %in% popular_artist,]
+@
+Taneczność:
+<<echo=F>>=
+mean_danceability <- sapply(popular_artist, function(x) {mean(data_popular$Danceability[data_popular$Artist == x])})
+
+mean_danceability[order(mean_danceability,decreasing=T)][1:5]
+@
+
+Pozytywność:
+<<echo=F>>=
+mean_valence <- sapply(popular_artist, function(x) {mean(data_popular$Valence[data_popular$Artist == x])})
+
+mean_valence[order(mean_valence,decreasing=T)][1:5]
+@
+\newpage
+Energiczność:
+<<echo=F>>=
+mean_energy <- sapply(popular_artist, function(x) {mean(data_popular$Energy[data_popular$Artist == x])})
+
+mean_energy[order(mean_energy,decreasing=T)][1:5]
+@
+
+Popularność:
+<<echo=F>>=
+mean_popularity <- sapply(popular_artist, function(x) {mean(data_popular$Popularity[data_popular$Artist == x])})
+
+mean_popularity[order(mean_popularity,decreasing=T)][1:5]
+@
+
+<<box_dance2, fig.width=7, fig.height=4, fig.align='center', fig.cap='Wykresy pudełkowe dla artystów o najwyższej średniej taneczności', echo=F>>=
+ggplot(data=data[data$Artist %in% c("Michael Jackson","Creedence Clearwater Revival","Ed Sheeran", "Prince", "De Dijk"),], aes(x=Artist,y=Danceability)) + geom_boxplot(fill=PineGreen, alpha=0.2)
+@
+
+<<box_valence2, fig.width=7, fig.height=4, fig.align='center', fig.cap='Wykresy pudełkowe dla artystów o najwyższej średniej pozytywności', echo=F>>=
+ggplot(data=data[data$Artist %in% c("Creedence Clearwater Revival","ABBA", "Bee Gees", "Michael Jackson", "The Rolling Stones"),], aes(x=Artist,y=Valence)) + geom_boxplot(fill=PineGreen, alpha=0.2)
+@
+
+<<box_energy2, fig.width=7, fig.height=4, fig.align='center', fig.cap='Wykresy pudełkowe dla artystów o najwyższej średniej energiczności', echo=F>>=
+ggplot(data=data[data$Artist %in% c("Metallica","Red Hot Chili Peppers","Muse", "Golden Earring", "Nirvana"),], aes(x=Artist,y=Energy)) + geom_boxplot(fill=PineGreen, alpha=0.2)
+@
+
+<<box_pop2, fig.width=7, fig.height=4, fig.align='center', fig.cap='Wykresy pudełkowe dla artystów o najwyższej średniej popularności', echo=F>>=
+ggplot(data=data[data$Artist %in% c("Ed Sheeran", "Red Hot Chili Peppers","Coldplay", "Adele", "Elton John"),], aes(x=Artist,y=Popularity)) + geom_boxplot(fill=PineGreen, alpha=0.2)
+@
+
+Nie jest to zaskoczeniem, że w~kategorii najlepszych piosenek do~tańca przoduje Michael Jackson. Widać, że pudełko wykresu (patrz wykres \ref{fig:box_dance2}) jest ponad pozostałymi. Wartym uwagi jest również Ed Sheeran, który z~pozostałych wykonawców, mimo podobnej mediany ma najmniejszy rozstęp międzykwartylowy. 
+
+Po spojrzeniu na wykres \ref{fig:box_valence2} stwierdzamy, że najbardziej pozytywną muzykę ma wykonawca Creedence Clearwater Revival. Ma najkrótsze wąsy i~najwyższą medianę.
+
+Do najbardziej energicznych wykonawców, widocznych na wykresie \ref{fig:box_energy2} możemy zaliczyć Metallicę, Golden Earring oraz Nirvanę. Spośród pięciu artystów o~najwyższej średniej energicznośći mają oni najmniejszy rozrzut. 
+
+Na podstawie wykresu \ref{fig:box_pop2}, jako najpopularniejszych możemy uznać Eda Sheerana i~Red Hot Chili Peppers. Przy czym prawie wszystkie piosenki Red Hot Chili Peppers są popularne. 
+\newpage
+Możemy również, tak jak w~przypadku dekad, określić najpopularniejszych artystów ogółem na~spotify, a~nie tylko w~naszych danych. Korzystajac z~informacji, którzy wykonawcy mają najwięcej utworów. Zobaczmy $10$ najpopularniejszych:
+
+<<echo=F>>=
+artist_count <- count(data,"Artist")
+artist_count[order(artist_count$freq,decreasing=T),][c(1:10),]
+@
+
+\chapter{Podsumowanie}
+Podsumowując powyższą analizę, piosenek na imprezę powinniśmy szukać rozpatrując ich energiczność, popularność i~to jak dobrze się do~nich tańczy.
+Po~przyjrzeniu się taneczności zauważyłyśmy jej silny związek z~pozytywnością muzyczną. Potwierdziło się to, gdy szukałyśmy zarówno najlepszych gatunków jak i~dekad. Przy obu charakterystykach przodowało disco i~lata 80. Najbardziej taneczne piosenki można też rozpoznać po ich tempie. Powinny mieć pomiędzy $100$ a~$150$ uderzeń na minutę. Do~arytsów, których piosenki charakteryzują się najwyższą tanecznością, zaliczamy Michaela Jacksona i~Eda Sherana. Eda Sheerana wybrałyśmy ze~względu na to, że prawie wszystkie piosenki ma równie nadające się do~tańca. W~przypadku pozytywności wyróżniał się Creedence Clearwater Revival. Nie pokrywa się to z~artystami o~najlepszych do~tańca utworach.
+
+Piosenki na przyjęcie powinny być też energiczne. Wiąże się to z~głośnymi utworami, które nie mogą być akustyczne. Najwięcej energicznych utworów powstało w~latach $2000-2010$. Gatunkiem najbardziej energicznym okazał się big beat, który nadaje się również do~tańca. Jeżeli chodzi o~wykonawców wśród najlepszych pojawili się Metallica, Golden Earring oraz Nirvana.
+
+Wśród ''Top 2000'' średnio najbardziej popularna muzyka pochodzi z~lat 60. Co ciekawe w~tych latach powstała większość kawałków disco. Ponadto najwięcej popularnych kawałków znajdziemy u~Eda Sheerana i~Red Hot Chili Peppers.
+
+Najwięcej utworów zostało wydanych w~latach $2010-2020$, a~biorąc pod uwagę wykonawców największą ilość piosenek przypisujemy zespołom: Queen, The Beatles i~Coldplay. Korzystając z~faktu, że mamy top utwory ze~Spotify, możemy powiedzieć, że~lata $2010-2020$  i~wyżej wymienieni artyści są ogółem najpopularniejsi na tej platformie.
+\end{document}
